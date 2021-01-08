@@ -1,0 +1,121 @@
+swagger: '2.0'
+info:
+  title: Session Tracker
+  description: Tracks session information
+  version: 1.0.0
+host: '127.0.0.1:8000'
+basePath: /
+produces:
+  - application/json
+schemes:
+  - http
+tags:
+  - name: Tracking
+    description: Session Tracking
+definitions:
+  SessionActionType:
+    title: Session Action Type
+    type: string
+    enum:
+      - login
+      - logout
+      - buy
+      - review
+      - shopping-cart
+  SessionAction:
+    title: Session Action
+    required:
+      - ip
+    properties:
+      ip:
+        type: string
+        description: Client IP
+      resolution:
+        type: object
+        description: Current resolution
+        required:
+          - width
+          - height
+        properties:
+          width:
+            type: integer
+          height:
+            type: integer
+  SessionLocation:
+    title: Session Location Details
+    required:
+      - longitude
+      - latitude
+      - city
+      - region
+      - country
+      - country_code
+    properties:
+      longitude:
+        type: number
+        format: float
+      latitude:
+        type: number
+        format: float
+      city:
+        type: string
+      region:
+        type: string
+      country:
+        type: string
+      country_code:
+        type: string
+  SessionActionDetails:
+    required:
+      - action
+      - info
+      - location
+      - action_date
+    properties:
+      action:
+        $ref: '#/definitions/SessionActionType'
+      info:
+        $ref: '#/definitions/SessionAction'
+      location:
+        $ref: '#/definitions/SessionLocation'
+      action_date:
+        type: string
+        description: ISO 8601 representation of current date/time with timezone information (using client's timezone)
+paths:
+  '/track/{action}':
+    post:
+      summary: Session action tracking
+      description: Records session action information.
+      tags:
+        - Tracking
+      parameters:
+        - name: action
+          in: path
+          description: Session action
+          required: true
+          type: string
+          enum:
+            - login
+            - logout
+            - buy
+            - review
+            - shopping-cart
+        - name: body
+          in: body
+          type: object
+          schema:
+            $ref: '#/definitions/SessionAction'
+      responses:
+        '200':
+          description: Successful response
+          schema:
+            $ref: '#/definitions/SessionActionDetails'
+        '400':
+          description: Invalid request. Specified request parameters are not valid.
+          schema:
+            properties:
+              errors:
+                type: array
+                description: Message for validation errors.
+                items:
+                  type: object
