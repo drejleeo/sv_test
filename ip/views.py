@@ -1,66 +1,69 @@
-from json import JSONDecodeError
-
-from rest_framework import status
-from django.http import JsonResponse
+from rest_framework.parsers import JSONParser
 from rest_framework.views import APIView
+from django.http import JsonResponse
+
 from datetime import datetime
-import json
 import requests
 import pytz
+import io
 
 from skillvaluetest.settings import IP_SERVICE_URL
-
-
-error_messages = {
-    status.HTTP_400_BAD_REQUEST: 'Invalid request. Specified body or request parameters are not valid.',
-}
+from ip.serializers import (
+    SessionActionDetailsSerializer,
+    SessionActionSerializer,
+    SessionLocationDetails,
+    SessionActionType,
+)
 
 
 class TrackActionAPI(APIView):
 
     @staticmethod
-    def throw_error(code):
-        error = {
-            'errors': [error_messages[code],]
-        }
-        return JsonResponse(error, status=code)
+    def get_json_info_from_ip_service(ip: str):
+        """
+        Retrieve JSON information from IP Service endpoint.
+        :param ip: str
+        :return: dict
+        """
+        res = requests.get(url='/'.join((IP_SERVICE_URL, ip)))
+        stream = io.BytesIO(res.content)
+        return JSONParser().parse(stream)
 
     def post(self, request, *args, **kwargs):
+        # Parse path parameter and body
         action = kwargs.get('action')
-        try:
-            info = json.loads(request.body.decode())
-        except JSONDecodeError:
-            return self.throw_error(400)
+        action_ser = SessionActionType(data={'action': action})
 
-        # Validate parameters and body
-        if (action not in ('login', 'logout', 'buy', 'review', 'shopping-cart') or
-                info.get('ip') is None or
-                info.get('resolution') is None):
-            return self.throw_error(400)
+        stream = io.BytesIO(request.body)
+        json_body = JSONParser().parse(stream)
+        info_ser = SessionActionSerializer(data=json_body)
+
+        # Validate user input
+        for serial in (action_ser, info_ser):
+            if not serial.is_valid():
+                return JsonResponse(serial.errors, status=400)
 
         # Retrieve IP information
-        location = retrieve_ip_details(info.get('ip'))
-        if location.get('status') == 'fail':
-            return self.throw_error(400)
+        geo_json = self.get_json_info_from_ip_service(info_ser.data.get('ip'))
+        location_ser = SessionLocationDetails(data=geo_json)
+        if geo_json.get('status') != 'success' or not location_ser.is_valid():
+            return JsonResponse({
+                'service': 'Service temporarily unavailable.'
+            }, status=503)
+        client_tz = geo_json.get('timezone')
 
         # Compute client time
-        client_timezone = pytz.timezone(location.get('timezone'))
+        client_timezone = pytz.timezone(client_tz)
         utc_now = pytz.utc.localize(datetime.utcnow())
         client_now = utc_now.astimezone(client_timezone)
 
         # Build response
-        final = {
-            'action': action,
-            'info': info,
-            'location': {
-                key: location[key] for key in ('lon', 'lat', 'city', 'region', 'country', 'countryCode')
-            },
+        serializer = SessionActionDetailsSerializer(data={
+            'action': action_ser.data.get('action'),
+            'info': info_ser.data,
+            'location': location_ser.data,
             'action_date': client_now.isoformat(),
-        }
-        return JsonResponse(final)
-
-
-def retrieve_ip_details(ip_addr):
-    res = requests.get(url='/'.join((IP_SERVICE_URL, ip_addr)))
-    location = json.loads(res.content.decode())
-    return location
+        })
+        if serializer.is_valid():
+            return JsonResponse(serializer.data, status=200)
+        return JsonResponse(serializer.errors, status=400)
